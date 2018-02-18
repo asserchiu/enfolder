@@ -59,6 +59,11 @@ func main() {
 			// check with all keywords of the rule
 			for _, kw := range rule.KeyWords {
 
+				if kw == "" {
+					// empty keyword, skip and check next keyword if exist
+					continue
+				}
+
 				// check if the filename contains the keyword
 				if !strings.Contains(strings.ToLower(f), strings.ToLower(kw)) {
 					// didn't matched, check next keyword
