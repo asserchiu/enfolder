@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"flag"
 	"io/ioutil"
 	"log"
 	"os"
@@ -16,78 +17,102 @@ const (
 
 type EnfolderRule struct {
 	FolderName string   `json:"folder_name"`
-	KeyWords   []string `json:"key_words"`
+	Keywords   []string `json:"keywords"`
 }
 
 func main() {
-	var err error
+	var (
+		err error
 
+		// TODO: auto detect the execution running from command line interface
+		cliMode = flag.Bool("cli", false, "Command Line Interface mode: do not pause execution at the end of execution")
+		cfgFile = flag.String("config", defaultConfigName, "config file")
+	)
+
+	// parse command-line flags
+	flag.Parse()
+
+	// set log output to stdout, instead of stderr
 	log.SetOutput(os.Stdout)
 
 	log.Printf("===== enfolder begin =====")
-	defer log.Printf("===== enfolder end =====")
+	defer func() {
+		if err := recover(); err != nil {
+			// No need to print second time, just recover from the panic
+			//log.Printf("recover: %v", err)
+		}
+
+		log.Printf("===== enfolder end =====")
+
+		if !*cliMode {
+			log.Printf("Press ENTER to exit ... (use -cli to skip)")
+			bufio.NewReader(os.Stdin).ReadByte()
+		}
+	}()
 
 	// read rule file
-	content, err := ioutil.ReadFile(defaultConfigName)
+	content, err := ioutil.ReadFile(*cfgFile)
 	if err != nil {
-		log.Fatalf("ioutil.ReadFile err: %v", err)
+		log.Panicf("ioutil.ReadFile err: %v", err)
 	}
 
 	// parse rule file
 	var rules []EnfolderRule
 	err = json.Unmarshal(content, &rules)
 	if err != nil {
-		log.Fatalf("json.Unmarshal err: %v", err)
+		log.Panicf("json.Unmarshal err: %v", err)
 	}
 
 	// get all filename in the working directory
-	files, err := filepath.Glob("*")
+	fileNames, err := filepath.Glob("*")
 	if err != nil {
-		log.Fatalf("filepath.Glob err: %v", err)
+		log.Panicf("filepath.Glob err: %v", err)
 	}
 
 	// for all files
-	for _, f := range files {
-		// check with each rule (destination folder)
-		for _, rule := range rules {
+	for _, fileName := range fileNames {
+		// get destination folder name
+		destination := GetDestinationFolderName(fileName, rules)
+		if destination == "" {
+			// no destination, do nothing and go to next file/folder
+			continue
+		}
 
-			// ignore the file (folder) that has the same name with the destination folder name
-			if f == rule.FolderName {
-				continue
-			}
+		// create folder before moving file
+		err = os.Mkdir(destination, os.ModePerm)
+		if err != nil && !os.IsExist(err) {
+			log.Panicf("os.Mkdir err: %v", err)
+		}
 
-			// check with all keywords of the rule
-			for _, kw := range rule.KeyWords {
+		// move file into the folder
+		log.Printf("* Move `%s` into `%s`", fileName, destination)
+		err = os.Rename(fileName, destination+string(os.PathSeparator)+fileName)
+		if err != nil {
+			log.Panicf("os.Rename err: %v", err)
+		}
+	}
+}
 
-				if kw == "" {
-					// empty keyword, skip and check next keyword if exist
-					continue
-				}
+func GetDestinationFolderName(fileName string, rules []EnfolderRule) (destinationFolderName string) {
+	if fileName == "" {
+		return ""
+	}
 
-				// check if the filename contains the keyword
-				if !strings.Contains(strings.ToLower(f), strings.ToLower(kw)) {
-					// didn't matched, check next keyword
-					continue
-				}
+	// check with each rule (destination folder)
+	for _, rule := range rules {
+		// ignore the folder (or file) that has the same name with the destination folder name
+		if fileName == rule.FolderName {
+			return ""
+		}
 
-				// create folder before moving file
-				err = os.Mkdir(rule.FolderName, os.ModePerm)
-				if err != nil && !os.IsExist(err) {
-					log.Fatalf("os.Mkdir err: %v", err)
-				}
-
-				// move file into the folder
-				log.Printf("* `%s` <- `%s`", rule.FolderName, f)
-				err = os.Rename(f, rule.FolderName+string(os.PathSeparator)+f)
-				if err != nil {
-					log.Fatalf("os.Rename err: %v", err)
-				}
+		// check with all keywords of the rule
+		for _, keyword := range rule.Keywords {
+			// check if the filename contains the keyword
+			if keyword != "" && strings.Contains(strings.ToLower(fileName), strings.ToLower(keyword)) {
+				return rule.FolderName
 			}
 		}
 	}
 
-	log.Printf("Press ENTER to exit ...")
-
-	bio := bufio.NewReader(os.Stdin)
-	_, _, err = bio.ReadLine()
+	return ""
 }

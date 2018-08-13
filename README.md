@@ -9,7 +9,7 @@ Note that the folder with exact the same name to the destination folder will not
 [
   {
     "folder_name": "vlcsnap",
-    "key_words": [
+    "keywords": [
       "vlcsnap"
     ]
   }
