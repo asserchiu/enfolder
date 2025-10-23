@@ -28,34 +28,55 @@ type ValidationError struct {
 	Reason     string
 }
 
+// Error implements the error interface for ValidationError
+func (e *ValidationError) Error() string {
+	return fmt.Sprintf("invalid folder name '%s': %s", e.FolderName, e.Reason)
+}
+
 // ValidateFolderName checks if a folder name is valid across Windows, macOS, and Linux
-func ValidateFolderName(name string) (bool, string) {
+// Returns ValidationError if the name is invalid, nil otherwise
+func ValidateFolderName(name string) error {
 	// Check if empty
 	if name == "" {
-		return false, "folder name cannot be empty"
+		return &ValidationError{
+			FolderName: name,
+			Reason:     "folder name cannot be empty",
+		}
 	}
 
 	// Check for Unix-specific restrictions first
 	// Cannot be "." or ".."
 	if name == "." || name == ".." {
-		return false, "folder name cannot be '.' or '..'"
+		return &ValidationError{
+			FolderName: name,
+			Reason:     "folder name cannot be '.' or '..'",
+		}
 	}
 
 	// Check length (max 255 characters for most filesystems)
 	if len(name) > 255 {
-		return false, "folder name exceeds 255 characters"
+		return &ValidationError{
+			FolderName: name,
+			Reason:     "folder name exceeds 255 characters",
+		}
 	}
 
 	// Check for invalid characters (Windows is most restrictive)
 	// Invalid: < > : " / \ | ? * and control characters (0x00-0x1F)
 	invalidChars := regexp.MustCompile(`[<>:"/\\|?*\x00-\x1F]`)
 	if invalidChars.MatchString(name) {
-		return false, "folder name contains invalid characters (< > : \" / \\ | ? * or control characters)"
+		return &ValidationError{
+			FolderName: name,
+			Reason:     `folder name contains invalid characters (< > : " / \ | ? * or control characters)`,
+		}
 	}
 
 	// Check if name ends with space or period (Windows restriction)
 	if strings.HasSuffix(name, " ") || strings.HasSuffix(name, ".") {
-		return false, "folder name cannot end with space or period"
+		return &ValidationError{
+			FolderName: name,
+			Reason:     "folder name cannot end with space or period",
+		}
 	}
 
 	// Check for reserved names on Windows (case-insensitive)
@@ -71,34 +92,24 @@ func ValidateFolderName(name string) (bool, string) {
 	// Check base name without extension for reserved names
 	upperName := strings.ToUpper(name)
 	if reservedNames[upperName] {
-		return false, fmt.Sprintf("folder name '%s' is a reserved name on Windows", name)
+		return &ValidationError{
+			FolderName: name,
+			Reason:     fmt.Sprintf("folder name '%s' is a reserved name on Windows", name),
+		}
 	}
 
 	// Also check if the name before the first dot is reserved (e.g., "CON.txt")
 	if dotIndex := strings.Index(name, "."); dotIndex > 0 {
 		baseName := strings.ToUpper(name[:dotIndex])
 		if reservedNames[baseName] {
-			return false, fmt.Sprintf("folder name '%s' starts with a reserved name on Windows", name)
+			return &ValidationError{
+				FolderName: name,
+				Reason:     fmt.Sprintf("folder name '%s' starts with a reserved name on Windows", name),
+			}
 		}
 	}
 
-	return true, ""
-}
-
-// ValidateAllFolderNames validates all folder names in the rules
-func ValidateAllFolderNames(rules []EnfolderRule) []ValidationError {
-	var errors []ValidationError
-
-	for _, rule := range rules {
-		if valid, reason := ValidateFolderName(rule.FolderName); !valid {
-			errors = append(errors, ValidationError{
-				FolderName: rule.FolderName,
-				Reason:     reason,
-			})
-		}
-	}
-
-	return errors
+	return nil
 }
 
 func main() {
@@ -145,7 +156,19 @@ func main() {
 	}
 
 	// validate all folder names in the config
-	validationErrors := ValidateAllFolderNames(rules)
+	var validationErrors []*ValidationError
+	for _, rule := range rules {
+		if err := ValidateFolderName(rule.FolderName); err != nil {
+			// Try to assert the error as ValidationError
+			if ve, ok := err.(*ValidationError); ok {
+				validationErrors = append(validationErrors, ve)
+			} else {
+				// Fallback for unexpected error types
+				log.Panicf("Unexpected error during validation: %v", err)
+			}
+		}
+	}
+
 	if len(validationErrors) > 0 {
 		log.Printf("ERROR: Found %d invalid folder name(s) in the config file:", len(validationErrors))
 		log.Printf("-------------------------------------------------------")

@@ -47,123 +47,132 @@ func TestValidateFolderName(t *testing.T) {
 	tests := []struct {
 		name       string
 		folderName string
-		wantValid  bool
+		wantError  bool
 		wantReason string // substring to check in reason
 	}{
 		// Valid names
-		{"valid simple name", "Documents", true, ""},
-		{"valid with spaces", "My Documents", true, ""},
-		{"valid with underscore", "my_folder", true, ""},
-		{"valid with dash", "my-folder", true, ""},
-		{"valid with numbers", "folder123", true, ""},
-		{"valid with parentheses", "folder(1)", true, ""},
-		{"valid with brackets", "folder[1]", true, ""},
-		{"valid with unicode", "資料夾", true, ""},
-		{"valid starts with dot", ".hidden", true, ""},
+		{"valid simple name", "Documents", false, ""},
+		{"valid with spaces", "My Documents", false, ""},
+		{"valid with underscore", "my_folder", false, ""},
+		{"valid with dash", "my-folder", false, ""},
+		{"valid with numbers", "folder123", false, ""},
+		{"valid with parentheses", "folder(1)", false, ""},
+		{"valid with brackets", "folder[1]", false, ""},
+		{"valid with unicode", "資料夾", false, ""},
+		{"valid starts with dot", ".hidden", false, ""},
 
 		// Invalid: empty
-		{"empty name", "", false, "empty"},
+		{"empty name", "", true, "empty"},
 
 		// Invalid: too long
-		{"too long", strings.Repeat("a", 256), false, "255"},
+		{"too long", strings.Repeat("a", 256), true, "255"},
 
 		// Invalid: Windows reserved characters
-		{"contains <", "folder<name", false, "invalid characters"},
-		{"contains >", "folder>name", false, "invalid characters"},
-		{"contains :", "folder:name", false, "invalid characters"},
-		{"contains \"", "folder\"name", false, "invalid characters"},
-		{"contains /", "folder/name", false, "invalid characters"},
-		{"contains \\", "folder\\name", false, "invalid characters"},
-		{"contains |", "folder|name", false, "invalid characters"},
-		{"contains ?", "folder?name", false, "invalid characters"},
-		{"contains *", "folder*name", false, "invalid characters"},
+		{"contains <", "folder<name", true, "invalid characters"},
+		{"contains >", "folder>name", true, "invalid characters"},
+		{"contains :", "folder:name", true, "invalid characters"},
+		{"contains \"", "folder\"name", true, "invalid characters"},
+		{"contains /", "folder/name", true, "invalid characters"},
+		{"contains \\", "folder\\name", true, "invalid characters"},
+		{"contains |", "folder|name", true, "invalid characters"},
+		{"contains ?", "folder?name", true, "invalid characters"},
+		{"contains *", "folder*name", true, "invalid characters"},
 
 		// Invalid: ends with space or period
-		{"ends with space", "folder ", false, "end with space or period"},
-		{"ends with period", "folder.", false, "end with space or period"},
-		{"ends with multiple periods", "folder...", false, "end with space or period"},
+		{"ends with space", "folder ", true, "end with space or period"},
+		{"ends with period", "folder.", true, "end with space or period"},
+		{"ends with multiple periods", "folder...", true, "end with space or period"},
 
 		// Invalid: reserved names (Windows)
-		{"reserved CON", "CON", false, "reserved name"},
-		{"reserved PRN", "PRN", false, "reserved name"},
-		{"reserved AUX", "AUX", false, "reserved name"},
-		{"reserved NUL", "NUL", false, "reserved name"},
-		{"reserved COM1", "COM1", false, "reserved name"},
-		{"reserved COM9", "COM9", false, "reserved name"},
-		{"reserved LPT1", "LPT1", false, "reserved name"},
-		{"reserved LPT9", "LPT9", false, "reserved name"},
-		{"reserved con lowercase", "con", false, "reserved name"},
-		{"reserved CON.txt", "CON.txt", false, "reserved name"},
-		{"reserved aux.log", "aux.log", false, "reserved name"},
+		{"reserved CON", "CON", true, "reserved name"},
+		{"reserved PRN", "PRN", true, "reserved name"},
+		{"reserved AUX", "AUX", true, "reserved name"},
+		{"reserved NUL", "NUL", true, "reserved name"},
+		{"reserved COM1", "COM1", true, "reserved name"},
+		{"reserved COM9", "COM9", true, "reserved name"},
+		{"reserved LPT1", "LPT1", true, "reserved name"},
+		{"reserved LPT9", "LPT9", true, "reserved name"},
+		{"reserved con lowercase", "con", true, "reserved name"},
+		{"reserved CON.txt", "CON.txt", true, "reserved name"},
+		{"reserved aux.log", "aux.log", true, "reserved name"},
 
 		// Invalid: Unix special names
-		{"dot", ".", false, "cannot be '.' or '..'"},
-		{"double dot", "..", false, "cannot be '.' or '..'"},
+		{"dot", ".", true, "cannot be '.' or '..'"},
+		{"double dot", "..", true, "cannot be '.' or '..'"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotValid, gotReason := ValidateFolderName(tt.folderName)
-			if gotValid != tt.wantValid {
-				t.Errorf("ValidateFolderName(%q) valid = %v, want %v", tt.folderName, gotValid, tt.wantValid)
-			}
-			if !tt.wantValid && tt.wantReason != "" {
-				if !strings.Contains(strings.ToLower(gotReason), strings.ToLower(tt.wantReason)) {
-					t.Errorf("ValidateFolderName(%q) reason = %q, want to contain %q", tt.folderName, gotReason, tt.wantReason)
+			err := ValidateFolderName(tt.folderName)
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("ValidateFolderName(%q) expected error, got nil", tt.folderName)
+					return
+				}
+
+				// Type assert to ValidationError
+				ve, ok := err.(*ValidationError)
+				if !ok {
+					t.Errorf("ValidateFolderName(%q) returned non-ValidationError: %T", tt.folderName, err)
+					return
+				}
+
+				// Check folder name is set correctly
+				if ve.FolderName != tt.folderName {
+					t.Errorf("ValidationError.FolderName = %q, want %q", ve.FolderName, tt.folderName)
+				}
+
+				// Check reason contains expected substring
+				if tt.wantReason != "" {
+					if !strings.Contains(strings.ToLower(ve.Reason), strings.ToLower(tt.wantReason)) {
+						t.Errorf("ValidationError.Reason = %q, want to contain %q", ve.Reason, tt.wantReason)
+					}
+				}
+
+				// Check Error() method
+				errMsg := err.Error()
+				if !strings.Contains(errMsg, tt.folderName) {
+					t.Errorf("ValidationError.Error() = %q, want to contain folder name %q", errMsg, tt.folderName)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("ValidateFolderName(%q) expected no error, got %v", tt.folderName, err)
 				}
 			}
 		})
 	}
 }
 
-func TestValidateAllFolderNames(t *testing.T) {
+func TestValidationError_Error(t *testing.T) {
 	tests := []struct {
-		name       string
-		rules      []EnfolderRule
-		wantErrors int
+		name         string
+		ve           ValidationError
+		wantContains []string
 	}{
 		{
-			name: "all valid",
-			rules: []EnfolderRule{
-				{"Documents", []string{"doc"}},
-				{"Pictures", []string{"pic"}},
-				{"Videos", []string{"vid"}},
+			name: "basic error",
+			ve: ValidationError{
+				FolderName: "test",
+				Reason:     "invalid",
 			},
-			wantErrors: 0,
+			wantContains: []string{"test", "invalid"},
 		},
 		{
-			name: "some invalid",
-			rules: []EnfolderRule{
-				{"Documents", []string{"doc"}},
-				{"CON", []string{"con"}},        // reserved
-				{"folder:name", []string{"x"}},  // invalid char
-				{"folder.", []string{"y"}},      // ends with period
+			name: "reserved name error",
+			ve: ValidationError{
+				FolderName: "CON",
+				Reason:     "folder name 'CON' is a reserved name on Windows",
 			},
-			wantErrors: 3,
-		},
-		{
-			name: "all invalid",
-			rules: []EnfolderRule{
-				{"", []string{"a"}},           // empty
-				{".", []string{"b"}},          // special
-				{"folder/name", []string{"c"}}, // invalid char
-			},
-			wantErrors: 3,
-		},
-		{
-			name:       "empty rules",
-			rules:      []EnfolderRule{},
-			wantErrors: 0,
+			wantContains: []string{"CON", "reserved name"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			errors := ValidateAllFolderNames(tt.rules)
-			if len(errors) != tt.wantErrors {
-				t.Errorf("ValidateAllFolderNames() got %d errors, want %d", len(errors), tt.wantErrors)
-				for _, e := range errors {
-					t.Logf("  Error: %s - %s", e.FolderName, e.Reason)
+			errMsg := tt.ve.Error()
+			for _, want := range tt.wantContains {
+				if !strings.Contains(errMsg, want) {
+					t.Errorf("Error() = %q, want to contain %q", errMsg, want)
 				}
 			}
 		})
