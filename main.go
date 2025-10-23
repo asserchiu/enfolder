@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -18,6 +20,85 @@ const (
 type EnfolderRule struct {
 	FolderName string   `json:"folder_name"`
 	Keywords   []string `json:"keywords"`
+}
+
+// ValidationError represents a folder name validation error
+type ValidationError struct {
+	FolderName string
+	Reason     string
+}
+
+// ValidateFolderName checks if a folder name is valid across Windows, macOS, and Linux
+func ValidateFolderName(name string) (bool, string) {
+	// Check if empty
+	if name == "" {
+		return false, "folder name cannot be empty"
+	}
+
+	// Check for Unix-specific restrictions first
+	// Cannot be "." or ".."
+	if name == "." || name == ".." {
+		return false, "folder name cannot be '.' or '..'"
+	}
+
+	// Check length (max 255 characters for most filesystems)
+	if len(name) > 255 {
+		return false, "folder name exceeds 255 characters"
+	}
+
+	// Check for invalid characters (Windows is most restrictive)
+	// Invalid: < > : " / \ | ? * and control characters (0x00-0x1F)
+	invalidChars := regexp.MustCompile(`[<>:"/\\|?*\x00-\x1F]`)
+	if invalidChars.MatchString(name) {
+		return false, "folder name contains invalid characters (< > : \" / \\ | ? * or control characters)"
+	}
+
+	// Check if name ends with space or period (Windows restriction)
+	if strings.HasSuffix(name, " ") || strings.HasSuffix(name, ".") {
+		return false, "folder name cannot end with space or period"
+	}
+
+	// Check for reserved names on Windows (case-insensitive)
+	// CON, PRN, AUX, NUL, COM1-COM9, LPT1-LPT9
+	reservedNames := map[string]bool{
+		"CON": true, "PRN": true, "AUX": true, "NUL": true,
+		"COM1": true, "COM2": true, "COM3": true, "COM4": true, "COM5": true,
+		"COM6": true, "COM7": true, "COM8": true, "COM9": true,
+		"LPT1": true, "LPT2": true, "LPT3": true, "LPT4": true, "LPT5": true,
+		"LPT6": true, "LPT7": true, "LPT8": true, "LPT9": true,
+	}
+
+	// Check base name without extension for reserved names
+	upperName := strings.ToUpper(name)
+	if reservedNames[upperName] {
+		return false, fmt.Sprintf("folder name '%s' is a reserved name on Windows", name)
+	}
+
+	// Also check if the name before the first dot is reserved (e.g., "CON.txt")
+	if dotIndex := strings.Index(name, "."); dotIndex > 0 {
+		baseName := strings.ToUpper(name[:dotIndex])
+		if reservedNames[baseName] {
+			return false, fmt.Sprintf("folder name '%s' starts with a reserved name on Windows", name)
+		}
+	}
+
+	return true, ""
+}
+
+// ValidateAllFolderNames validates all folder names in the rules
+func ValidateAllFolderNames(rules []EnfolderRule) []ValidationError {
+	var errors []ValidationError
+
+	for _, rule := range rules {
+		if valid, reason := ValidateFolderName(rule.FolderName); !valid {
+			errors = append(errors, ValidationError{
+				FolderName: rule.FolderName,
+				Reason:     reason,
+			})
+		}
+	}
+
+	return errors
 }
 
 func main() {
@@ -62,6 +143,22 @@ func main() {
 	if err != nil {
 		log.Panicf("json.Unmarshal err: %v", err)
 	}
+
+	// validate all folder names in the config
+	validationErrors := ValidateAllFolderNames(rules)
+	if len(validationErrors) > 0 {
+		log.Printf("ERROR: Found %d invalid folder name(s) in the config file:", len(validationErrors))
+		log.Printf("-------------------------------------------------------")
+		for i, ve := range validationErrors {
+			log.Printf("%d. Folder name: '%s'", i+1, ve.FolderName)
+			log.Printf("   Reason: %s", ve.Reason)
+			log.Printf("")
+		}
+		log.Printf("-------------------------------------------------------")
+		log.Printf("Please fix the invalid folder names in '%s' and run again.", *cfgFile)
+		log.Panicf("Config validation failed")
+	}
+	log.Printf("Config validation passed: all %d folder name(s) are valid", len(rules))
 
 	// get all filename in the working directory
 	fileNames, err := filepath.Glob("*")
